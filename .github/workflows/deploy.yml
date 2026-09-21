@@ -1,0 +1,198 @@
+name: Node.js CI/CD to EKS
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-3
+  ECR_REPOSITORY: nodejs-app
+  EKS_CLUSTER_NAME: nodejs-eks-cicd-eu2
+  K8S_NAMESPACE: nodejs
+  HELM_RELEASE: nodejs-app
+
+jobs:
+
+  build-test-deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # =================================================
+      # 1. Checkout source code
+      # =================================================
+
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+
+      # =================================================
+      # 2. Setup Node.js
+      # =================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+
+      # =================================================
+      # 3. Install dependencies
+      # =================================================
+
+      - name: Install dependencies
+        run: npm ci
+
+
+      # =================================================
+      # 4. Run tests
+      # =================================================
+
+      - name: Run tests
+        run: npm test
+
+
+      # =================================================
+      # 5. Configure AWS using GitHub OIDC
+      # =================================================
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActions-EKS-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # =================================================
+      # 6. Verify AWS identity
+      # =================================================
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # =================================================
+      # 7. Login to Amazon ECR
+      # =================================================
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # =================================================
+      # 8. Set Docker image variables
+      # =================================================
+
+      - name: Set image variables
+        id: image
+        run: |
+          echo "registry=${{ steps.login-ecr.outputs.registry }}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+
+      # =================================================
+      # 9. Build Docker image
+      # =================================================
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }} \
+            -t ${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest \
+            .
+
+
+      # =================================================
+      # 10. Push Docker image to ECR
+      # =================================================
+
+      - name: Push Docker image
+        run: |
+          docker push \
+            ${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
+
+          docker push \
+            ${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+
+      # =================================================
+      # 11. Configure kubectl for EKS
+      # =================================================
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+
+      # =================================================
+      # 12. Verify EKS access
+      # =================================================
+
+      - name: Verify Kubernetes access
+        run: |
+          kubectl get nodes
+          kubectl get namespace ${{ env.K8S_NAMESPACE }}
+
+
+      # =================================================
+      # 13. Helm lint
+      # =================================================
+
+      - name: Helm lint
+        run: |
+          helm lint helm/nodejs-app
+
+
+      # =================================================
+      # 14. Deploy application using Helm
+      # =================================================
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} \
+            helm/nodejs-app \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --create-namespace \
+            --set image.repository=${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }} \
+            --set image.tag=${{ steps.image.outputs.tag }} \
+            --set image.pullPolicy=Always \
+            --wait \
+            --timeout 10m
+
+
+      # =================================================
+      # 15. Verify Kubernetes resources
+      # =================================================
+
+      - name: Verify deployment
+        run: |
+          echo "===== PODS ====="
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+
+          echo "===== DEPLOYMENT ====="
+          kubectl get deployment -n ${{ env.K8S_NAMESPACE }}
+
+          echo "===== SERVICE ====="
+          kubectl get svc -n ${{ env.K8S_NAMESPACE }}
+
+          echo "===== INGRESS ====="
+          kubectl get ingress -n ${{ env.K8S_NAMESPACE }}
+
+          echo "===== ROLLOUT ====="
+          kubectl rollout status \
+            deployment/nodejs-app-nodejs-app \
+            -n ${{ env.K8S_NAMESPACE }} \
+            --timeout=10m
