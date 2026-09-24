@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
     res.json({
-        message: "Node.js application is running on Amazon EKS final steps ha final",
+        message: "Node.js application is running on Amazon EKS final steps ha final example information ",
         version: "1.0.0",
         environment: process.env.NODE_ENV || "development"
     });
