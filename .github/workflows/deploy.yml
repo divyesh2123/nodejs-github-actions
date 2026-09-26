@@ -15,7 +15,7 @@ env:
   AWS_REGION: eu-west-3
   ECR_REPOSITORY: nodejs-github-actions
   EKS_CLUSTER_NAME: nodejs-github-actions-eks
-  K8S_NAMESPACE: nodejs
+  K8S_NAMESPACE: kube-system
   HELM_RELEASE: nodejs-app
 
 jobs:
