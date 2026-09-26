@@ -191,8 +191,8 @@ jobs:
           echo "===== INGRESS ====="
           kubectl get ingress -n ${{ env.K8S_NAMESPACE }}
 
-          echo "===== ROLLOUT ====="
+           echo "===== ROLLOUT ====="
           kubectl rollout status \
-            deployment/nodejs-app-nodejs-app \
+            deployment/nodejs-app \
             -n ${{ env.K8S_NAMESPACE }} \
             --timeout=10m
